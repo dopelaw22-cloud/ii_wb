@@ -1,0 +1,12 @@
+.env
+*.env
+!.env.example
+__pycache__/
+*.pyc
+venv/
+1. date/
+3. work/
+*.xlsx
+*.csv
+*.json
+!package.json
