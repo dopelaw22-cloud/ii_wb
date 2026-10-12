@@ -10,3 +10,14 @@ venv/
 *.csv
 *.json
 !package.json
+
+# Отчёты агентов — данные магазина, на GitHub не нужны
+4. reports/
+5. service/*.log
+# Любые копии и варианты .env
+.env.*
+!.env.example
+*.bak
+*.bak.*
+# Логи
+*.log

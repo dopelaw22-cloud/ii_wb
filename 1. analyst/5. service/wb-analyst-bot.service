@@ -1,0 +1,19 @@
+[Unit]
+Description=Telegram-бот агента-аналитика «Менеджер WB»
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/wb/Менеджер WB/1. analyst/2. script
+ExecStart=/home/wb/oplog/venv/bin/python "/home/wb/Менеджер WB/1. analyst/2. script/bot.py"
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/wb/Менеджер WB/1. analyst/3. work/bot.log
+StandardError=append:/home/wb/Менеджер WB/1. analyst/3. work/bot.log
+Environment=LANG=ru_RU.UTF-8
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
