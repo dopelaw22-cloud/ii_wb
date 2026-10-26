@@ -90,6 +90,12 @@ def stats(ids, date_from, date_to):
             j = L.call("advert", "/adv/v3/fullstats", wait=True,
                        params={"ids": ",".join(str(x) for x in chunk),
                                "beginDate": date_from, "endDate": date_to})
+        except L.Throttled as e:
+            # окно закрылось на середине: отдаём то, что уже скачали, иначе
+            # 50 кампаний статистики теряются и следующий прогон начнёт заново
+            print("   лимит после %d строк (%s) — сохраняю скачанное"
+                  % (len(rows), L.hhmm(e.left)))
+            return rows, True
         except RuntimeError as e:
             # кампания без статистики за период отдаёт 400 — это нормально
             print("   пропуск блока %d-%d: %s" % (i, i + len(chunk), str(e)[:120]))
@@ -122,7 +128,7 @@ def stats(ids, date_from, date_to):
                     cr = (a["orders"] / a["clicks"] * 100) if a["clicks"] else 0
                     rows.append((aid, d, k, a["views"], a["clicks"], ctr, cpc, a["sum"],
                                  a["atbs"], a["orders"], a["shks"], a["sum_price"], cr))
-    return rows
+    return rows, False
 
 
 def main():
@@ -159,12 +165,26 @@ def main():
                       i.get("created"), k["change_time"], i.get("nm_ids") or [],
                       json.dumps(i.get("raw") or {}, ensure_ascii=False)))
 
+        # fullstats отдаётся примерно раз в час и принимает 50 кампаний за вызов.
+        # Просить статистику по всем 121 — значит три вызова, то есть три часа,
+        # и за один прогон данные не соберутся никогда (в логе это было восемь
+        # дней «partial»). Из 121 кампании за период тратили деньги только 9,
+        # остальные завершены ещё раньше. Поэтому берём те, что действительно
+        # живые: с расходами за период плюс активные и приостановленные.
+        spent = {r[0] for r in L.q("""SELECT DISTINCT advert_id FROM wb.advert_spend
+                                      WHERE upd_time >= current_date - %s::int""", (a.days,))}
         stat_ids = [c["advert_id"] for c in camps
-                    if (not a.only_active) or c["status"] in (9, 11)]
+                    if c["advert_id"] in spent or c["status"] in (9, 11)]
+        if a.only_active:
+            stat_ids = [c["advert_id"] for c in camps if c["status"] in (9, 11)]
+        if not stat_ids:
+            stat_ids = [c["advert_id"] for c in camps][:50]
+        print("кампаний со статистикой: %d (из %d — остальные завершены и без расходов)"
+              % (len(stat_ids), len(ids)))
         d_to = datetime.date.today()
         d_from = d_to - datetime.timedelta(days=a.days)
         print("статистика по %d кампаниям за %s..%s" % (len(stat_ids), d_from, d_to))
-        rows = stats(stat_ids, d_from.isoformat(), d_to.isoformat())
+        rows, truncated = stats(stat_ids, d_from.isoformat(), d_to.isoformat())
 
         with L.db() as c, c.cursor() as cur:
             for r in rows:
@@ -179,8 +199,9 @@ def main():
                         sum_price=EXCLUDED.sum_price, cr=EXCLUDED.cr, synced_at=now()
                 """, r)
 
-        print("строк статистики: %d" % len(rows))
-        L.run_end(rid, "ok", rows=len(rows))
+        print("строк статистики: %d%s" % (len(rows), " (неполно, лимит)" if truncated else ""))
+        L.run_end(rid, "partial" if truncated else "ok", rows=len(rows),
+                  message="часть кампаний не успела за окно лимита" if truncated else None)
     except L.Throttled as e:
         print("под лимитом: %s" % e)
         L.run_end(rid, "partial", message=str(e)[:300])

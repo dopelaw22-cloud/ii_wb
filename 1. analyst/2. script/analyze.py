@@ -31,6 +31,10 @@ TH = {
     "stock_days_low": 14,       # остатка хватит меньше чем на столько дней
     "stock_days_high": 90,      # затоваривание
     "conv_cart_warn": 5.0,      # переход в карточку -> корзина, %
+    # ниже этой суммы кампания не обсуждается: 1-3 ₽ остатка на
+    # завершённой кампании — не провал, а шум, и пять таких
+    # «критичных» находок обесценивают десять настоящих
+    "advert_spend_min": 500.0,
 }
 
 
@@ -120,6 +124,8 @@ def rule_advert(recs, days):
         nm = r["name"] or ("кампания %s" % r["advert_id"])
         drr = (spend / rev * 100) if rev else None
 
+        if spend < TH["advert_spend_min"]:
+            continue
         if spend > 0 and orders == 0:
             add(recs, "advert", "critical",
                 "«%s»: %s затрат, ноль заказов" % (nm, L.money(spend)),
@@ -236,7 +242,12 @@ def rule_stocks(recs, days):
             FROM wb.sale WHERE sale_dt >= current_date - %s::int
               AND coalesce(is_return,false) = false
             GROUP BY nm_id)
-        SELECT p.nm_id, p.vendor_code, coalesce(l.qty,0) AS qty, coalesce(s.per_day,0) AS per_day
+        SELECT p.nm_id, p.vendor_code, coalesce(l.qty,0) AS qty,
+               coalesce(s.per_day,0) AS per_day,
+               coalesce(l.qty,0) * coalesce(
+                   (SELECT cost_rub + extra_rub FROM wb.cost c
+                     WHERE c.vendor_code = lower(p.vendor_code)
+                     ORDER BY valid_from DESC LIMIT 1), 0) AS frozen
         FROM wb.product p LEFT JOIN last l USING (nm_id) LEFT JOIN sold s USING (nm_id)
     """, (days, days))
     if not any(L.num(r["qty"]) for r in rows):
@@ -245,11 +256,13 @@ def rule_stocks(recs, days):
         qty, per_day = L.num(r["qty"]), L.num(r["per_day"])
         if per_day <= 0:
             if qty > 0:
-                add(recs, "stock", "info",
-                    "%s: %d шт. на складе, продаж нет" % (r["vendor_code"], qty),
-                    "За %d дней ни одной продажи, а товар занимает склад и копит плату "
-                    "за хранение." % days,
-                    nm_id=r["nm_id"], metric={"qty": qty})
+                add(recs, "stock", "warn",
+                    "%s: %d шт. лежит без продаж, заморожено %s"
+                    % (r["vendor_code"], qty, L.money(r["frozen"])),
+                    "За %d дней ни одной продажи. Деньги стоят в товаре, склад копит "
+                    "плату за хранение. Либо разбираться с карточкой и рекламой, "
+                    "либо вывозить и не закупать." % days,
+                    nm_id=r["nm_id"], metric={"qty": qty, "frozen": float(L.num(r["frozen"]))})
             continue
         days_left = qty / per_day
         if days_left < TH["stock_days_low"]:
@@ -260,10 +273,13 @@ def rule_stocks(recs, days):
                 nm_id=r["nm_id"], metric={"days_left": days_left, "qty": qty})
         elif days_left > TH["stock_days_high"]:
             add(recs, "stock", "info",
-                "%s: остатка на %.0f дней — затоваривание" % (r["vendor_code"], days_left),
-                "%d шт. при расходе %.1f шт./день. Деньги заморожены в товаре, плата "
-                "за хранение растёт." % (qty, per_day),
-                nm_id=r["nm_id"], metric={"days_left": days_left, "qty": qty})
+                "%s: остатка на %.0f дней, заморожено %s"
+                % (r["vendor_code"], days_left, L.money(r["frozen"])),
+                "%d шт. при расходе %.1f шт./день. При таком темпе запас разойдётся "
+                "за %.0f дней, и эти деньги всё это время не работают."
+                % (qty, per_day, days_left),
+                nm_id=r["nm_id"], metric={"days_left": days_left, "qty": qty,
+                                          "frozen": float(L.num(r["frozen"]))})
     return []
 
 

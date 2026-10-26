@@ -74,6 +74,13 @@ MIN_INTERVAL = {
     "prices:/api/v2/list/goods/filter":      1,
     "common:/api/v1/tariffs/commission":     60,
     "common:/api/v1/tariffs/box":            60,
+    # Документы отдаются раз в сутки — замерено 86 390 с. Неудачная попытка
+    # (например, limit>50) расходует окно так же, как успешная, поэтому
+    # параметры запроса к документам надо проверять до вызова, а ответ —
+    # сохранять на диск сразу, до любого разбора.
+    "documents:/api/v1/documents/categories": 24 * 3600,
+    "documents:/api/v1/documents/list":       24 * 3600,
+    "documents:/api/v1/documents/download":   60 * 60,
 }
 
 # ---------------------------------------------------------------- состояние лимитов

@@ -6,8 +6,13 @@
 нельзя — это сжигает окно и задание так и не скачивается.
 
 Вместо цикла задание запоминается в `wb.setting.stocks_task_id`, и следующий
-прогон (через cron или /обновить) просто забирает готовый отчёт. То есть
-остатки приходят со задержкой в один прогон — зато приходят.
+прогон просто забирает готовый отчёт.
+
+Важно про расписание: забирать нужно в пределах часа. Когда между созданием
+и проверкой проходило восемь часов (05:30 и 13:30), WB успевал отменить
+задание, и остатки не приходили никогда — в логе это выглядело как
+«задание отменено» восемь дней подряд. Поэтому в cron есть отдельный заход
+через 35 минут после сбора, он и забирает отчёт.
 
 Старый /api/v1/supplier/stocks задепрекейчен и отвечает 404 — не использовать.
 
@@ -20,7 +25,7 @@ import wb_lib as L
 FAMILY = "/api/v1/warehouse_remains"      # общий ключ квоты для всех трёх шагов
 TASK_KEY = "stocks_task_id"
 TASK_AT = "stocks_task_at"
-TASK_TTL_H = 12
+TASK_TTL_H = 2        # WB отменяет отчётное задание быстрее, чем за полсмены
 
 
 def create_task():
@@ -89,30 +94,36 @@ def main():
         if a.new or stale:
             task_id = ""
 
-        # шаг 1: есть незабранное задание — пробуем забрать
+        # шаг 1: есть незабранное задание — пробуем забрать.
+        # Статус НЕ спрашиваем: проверка статуса и скачивание делят одну квоту,
+        # поэтому после успешного status download немедленно упирался в лимит,
+        # и отчёт не скачивался никогда. Идём сразу за файлом: если он ещё не
+        # готов, WB ответит ошибкой, и мы повторим следующим прогоном.
         if task_id:
-            st = task_status(task_id)
-            print("задание %s: статус %s" % (task_id, st))
-            if st == "done":
+            try:
                 rows = download(task_id) or []
-                n = store(rows)
-                clear_task()
-                print("остатки записаны: %d строк по %d товарам" % (n, len(rows)))
-                tot = L.qd("""SELECT p.vendor_code, sum(s.quantity) AS q FROM wb.stock s
-                              JOIN wb.product p USING (nm_id)
-                              WHERE s.captured_at=(SELECT max(captured_at) FROM wb.stock)
-                              GROUP BY p.vendor_code ORDER BY p.vendor_code""")
-                for t in tot:
-                    print("   %-16s %s шт." % (t["vendor_code"][:16], int(L.num(t["q"]))))
-                L.run_end(rid, "ok", rows=n)
+            except L.Throttled:
+                raise
+            except Exception as e:
+                msg = str(e)[:200]
+                print("задание %s ещё не отдаётся: %s" % (task_id, msg))
+                if "404" in msg or "not found" in msg.lower():
+                    print("   задание потеряно — создам новое следующим прогоном")
+                    clear_task()
+                    L.run_end(rid, "partial", message="задание не найдено")
+                else:
+                    L.run_end(rid, "partial", message="отчёт готовится")
                 return
-            if st in ("purged", "canceled"):
-                print("задание отменено WB — создам новое в следующий прогон")
-                clear_task()
-                L.run_end(rid, "partial", message="задание отменено")
-                return
-            print("отчёт ещё готовится — заберу в следующий прогон")
-            L.run_end(rid, "partial", message="отчёт готовится")
+            n = store(rows)
+            clear_task()
+            print("остатки записаны: %d строк по %d товарам" % (n, len(rows)))
+            tot = L.qd("""SELECT p.vendor_code, sum(s.quantity) AS q FROM wb.stock s
+                          JOIN wb.product p USING (nm_id)
+                          WHERE s.captured_at=(SELECT max(captured_at) FROM wb.stock)
+                          GROUP BY p.vendor_code ORDER BY p.vendor_code""")
+            for row in tot:
+                print("   %-16s %s шт." % (row["vendor_code"][:16], int(L.num(row["q"]))))
+            L.run_end(rid, "ok", rows=n)
             return
 
         # шаг 2: заданий нет — создаём

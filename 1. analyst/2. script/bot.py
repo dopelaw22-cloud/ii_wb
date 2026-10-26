@@ -31,6 +31,7 @@ HELP = """Я аналитик вашего магазина на Wildberries.
 /сводка — главные цифры за 30 дней
 /прибыль — юнит-экономика по каждому товару
 /месяцы — прибыль по месяцам, «/месяцы 2026-09» — расшифровка
+/выкупы — выкупы WB за прошлый месяц для бухгалтера
 /реклама — кампании: затраты, ДРР, CTR, CPC
 /воронка — переходы, корзины, заказы, выкуп
 /карточки — фото, характеристики, описания
@@ -240,6 +241,7 @@ def norm(cmd):
         "сводка": "summary", "summary": "summary",
         "прибыль": "profit", "profit": "profit", "экономика": "profit",
         "месяцы": "months", "months": "months", "месяц": "months",
+        "выкупы": "buyouts", "buyouts": "buyouts",
         "реклама": "ads", "ads": "ads",
         "воронка": "funnel", "funnel": "funnel",
         "карточки": "cards", "cards": "cards",
@@ -274,6 +276,23 @@ def handle(chat_id, text, name):
         if cmd == "months":
             # «/месяцы 2026-09» — расшифровка конкретного месяца
             send(chat_id, V.months_block(detail_month=arg or None)); return
+        if cmd == "buyouts":
+            # «/выкупы», «/выкупы 2026-09» или «/выкупы квартал»
+            here = pathlib.Path(__file__).resolve().parent
+            args = ["--dry"]
+            if arg.lower().startswith("кварт"):
+                args = ["--prev-quarter", "--dry"]
+            elif arg:
+                args = ["--period", arg, "--dry"]
+            try:
+                r = subprocess.run(["/home/wb/oplog/venv/bin/python",
+                                    str(here / "check_buyouts.py")] + args,
+                                   cwd=str(here), capture_output=True, text=True, timeout=300)
+                out = (r.stdout or r.stderr or "").replace("\n--dry: сообщение не отправлено", "")
+                send(chat_id, out.strip() or "выкупов за период нет", mono=False)
+            except Exception as e:
+                send(chat_id, "не смог проверить выкупы: %s" % str(e)[:200], mono=False)
+            return
         if cmd == "ads":
             send(chat_id, V.ads_block()); return
         if cmd == "funnel":
