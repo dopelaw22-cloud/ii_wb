@@ -71,6 +71,15 @@ MIN_INTERVAL = {
     "advert:/adv/v1/promotion/count":        15 * 60,  # замерено 755 с
     "advert:/api/advert/v2/adverts":         60 * 60,   # замерено 3 594 с
     "content:/content/v2/get/cards/list":    1,
+    # Создание карточек — окно около 2 часов (замерено 7 123 с), и неудачная
+    # попытка расходует его целиком. Поэтому payload надо проверять до отправки:
+    # типы характеристик по charcType из /content/v2/object/charcs и бренд
+    # по справочнику WB.
+    "content:/content/v2/cards/upload":      2 * 3600,
+    "content:/content/v2/cards/upload/add":  2 * 3600,
+    "content:/content/v2/cards/update":      2 * 3600,
+    "content:/content/v3/media/save":        30 * 60,  # замерено 1 740 с
+    "content:/content/v2/object/charcs":     60,
     "prices:/api/v2/list/goods/filter":      1,
     "common:/api/v1/tariffs/commission":     60,
     "common:/api/v1/tariffs/box":            60,
