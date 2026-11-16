@@ -23,6 +23,17 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import wb_lib as L
 
 FAMILY = "/api/v1/warehouse_remains"      # общий ключ квоты для всех трёх шагов
+
+# WB подмешивает в список складов служебные строки: «Всего находится на складах»
+# — это итог по всем складам, а не склад. Если сложить её вместе с реальными
+# складами, остаток удваивается: проверено 10.11.2026, 223 в итоговой строке
+# против 223 суммой по 11 настоящим складам. Строки «в пути» — тоже не склад,
+# это товар в движении, и в наличии его нет.
+PSEUDO_WAREHOUSES = {
+    "всего находится на складах",
+    "в пути до получателей",
+    "в пути возвраты на склад wb",
+}
 TASK_KEY = "stocks_task_id"
 TASK_AT = "stocks_task_at"
 TASK_TTL_H = 2        # WB отменяет отчётное задание быстрее, чем за полсмены
@@ -57,6 +68,9 @@ def store(rows):
             if not whs:
                 continue
             for w in whs:
+                name = (w.get("warehouseName") or "").strip()
+                if name.lower() in PSEUDO_WAREHOUSES:
+                    continue        # служебная строка, не склад
                 cur.execute("""
                     INSERT INTO wb.stock (nm_id, warehouse, quantity, in_way_to,
                                           in_way_from, captured_at)
